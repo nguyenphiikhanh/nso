@@ -12,3 +12,4 @@
 *.class
 .idea/
 .agents
+.dbdata
