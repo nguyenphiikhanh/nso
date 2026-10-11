@@ -1,5 +1,5 @@
 # Sử dụng image Maven chính thức để build ứng dụng
-FROM maven:3.8.4-openjdk-17 AS build
+FROM maven:3-eclipse-temurin-21 AS build
 
 # Thiết lập thư mục làm việc trong container
 WORKDIR /app
@@ -17,7 +17,7 @@ COPY src ./src
 RUN mvn clean package -DskipTests
 
 # Sử dụng image OpenJDK chính thức để chạy ứng dụng
-FROM openjdk:17-jdk-slim
+FROM eclipse-temurin:21-jre-jammy
 
 # Thiết lập múi giờ
 RUN apt-get update && apt-get install -y tzdata && \

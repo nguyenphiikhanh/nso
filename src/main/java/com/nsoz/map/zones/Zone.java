@@ -43,7 +43,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class Zone extends Thread {
+public class Zone implements Runnable {
 
     @Getter
     public List<Mob> monsters;
@@ -113,6 +113,10 @@ public class Zone extends Thread {
         map.addZone(this);
         init();
         start();
+    }
+
+    public void start() {
+        Thread.ofVirtual().name("Zone-" + (map != null ? map.id : 0) + "-" + id).start(this);
     }
 
     public void addNpc(Npc npc) {

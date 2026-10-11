@@ -3,6 +3,7 @@ package com.nsoz.server;
 import java.awt.Button;
 import java.awt.Color;
 import java.awt.Frame;
+import java.awt.GraphicsEnvironment;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.WindowAdapter;
@@ -90,7 +91,15 @@ public class NinjaSchool extends WindowAdapter implements ActionListener {
                 return;
             }
             if (NinjaUtils.availablePort(Config.getInstance().getPort())) {
-                new NinjaSchool(); ///  tắt giao diện khi chạy linux
+                if (!GraphicsEnvironment.isHeadless()) {
+                    try {
+                        new NinjaSchool();
+                    } catch (Throwable t) {
+                        System.out.println("Khong the khoi tao GUI: " + t.getMessage());
+                    }
+                } else {
+                    System.out.println("Running in headless mode (GUI disabled).");
+                }
                 if (!Server.init()) {
                     System.out.println("Khoi tao that bai!");
                     return;
