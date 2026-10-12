@@ -1,0 +1,19 @@
+:root {
+  --color-canvas: #101416;
+  --color-surface: #171d1f;
+  --color-surface-raised: #20282a;
+  --color-surface-hover: #293335;
+  --color-border: #344143;
+  --color-text: #e9efeb;
+  --color-muted: #98a6a1;
+  --color-accent: #b9f36b;
+  --color-accent-ink: #18210f;
+  --color-accent-soft: #293a21;
+  --color-warm: #f1a773;
+  --color-danger: #ef7772;
+  --color-grid: #334044;
+  --font-mono: 'Cascadia Code', Consolas, monospace;
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 8px;
+}
