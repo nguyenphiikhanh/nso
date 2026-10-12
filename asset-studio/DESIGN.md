@@ -82,12 +82,16 @@ The visual direction borrows the precision of professional design software and t
 - Use monospaced text for coordinates, IDs, dimensions, and asset paths.
 - Keep headings modest so the canvas stays dominant.
 
-## Layout
-- A narrow top bar holds project identity, save state, and import/export actions.
-- A left rail selects maps and asset categories; a neighboring library lists tiles or assets.
-- The central canvas or preview is the largest region.
-- A right inspector edits metadata for the current selection.
-- Panels may collapse on narrow screens; the canvas remains scrollable and zoomable.
+## Layout & Module Architecture
+- **Top Bar**: Điều hướng các phân hệ chuyên sâu (🗺️ Map, 🥋 Character, 🎒 Items & Mounts, 🎬 Sprite/Animation), thanh trạng thái kết nối DB, và nút **Export** đa nền tảng.
+- **Draft Floating Bar**: Nằm ở góc dưới màn hình, hiển thị số lượng thay đổi chưa áp dụng (e.g., "3 thay đổi chưa lưu vào game"), nút **"Xem Diff"**, và nút **"Deploy to Game"** màu acid-lime.
+- **Left Rail & Library**: Lựa chọn danh sách thực thể (Danh sách Map NSO, Danh sách Quái vật, Danh sách Part trang phục, Danh sách Item/Thú cưỡi).
+- **Central Canvas / Previewer**: Không gian làm việc chính chiếm diện tích lớn nhất (vẽ tile map, kéo thả waypoint/mob/npc, preview avatar, timeline animation).
+- **Right Inspector**: Bảng thuộc tính chi tiết cho đối tượng đang chọn (thuộc tính Map, options của Item, chỉ số thú cưỡi, thông số frame).
+
+## Unity Client & Pixel Perfection
+- Mọi canvas hiển thị ảnh (Map Tiles, Sprites, Parts) bắt buộc dùng `image-rendering: pixelated` (Nearest-Neighbor) để đảm bảo không bị nhòe pixel.
+- Hỗ trợ xem trước ở các mốc zoom chuẩn NSO Unity: `1x`, `2x`, `3x`, `4x`.
 
 ## Elevation & Depth
 Use surface layers, fine borders, and restrained shadows. Avoid floating glass panels and decorative gradients.
@@ -106,3 +110,4 @@ Use small radii consistently. Tool controls should feel precise and easy to scan
 - Do show map dimensions, zoom, selected tile, and save status near the canvas.
 - Don't use cards for every row or field.
 - Don't use purple, glass effects, or decorative dashboard charts.
+

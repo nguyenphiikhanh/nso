@@ -45,14 +45,34 @@ Các script Node nạp `asset-studio/.env.local` nếu file tồn tại. File n�
 
 Project JSON lưu map theo lưới tile và metadata asset. Ảnh PNG được lưu riêng trong `assets/` rồi được tham chiếu bằng đường dẫn `/media/...`. Nút Export JSON chỉ xuất metadata và map; để mang toàn bộ project sang máy khác, hãy chép cả file JSON lẫn thư mục `assets/`.
 
-## MVP hiện có
+## Tính năng Hoàn thiện cho NSO (Server Java & Unity C# Client)
 
-- Tạo, đổi tên, xóa map dạng tile/sprite; chỉnh kích thước lưới, chọn tile, tô bằng chuột, tẩy và zoom.
-- Tạo, sửa và xóa tile, vật phẩm, nhân vật, trang phục, thú cưỡi.
-- Import PNG tối đa 10 MB cho một asset và xem trước với nearest-neighbor scaling.
-- Duyệt PNG nguồn trong `Data/Img`; mở sprite để xem/chỉnh pixel bằng bút, tẩy, màu, zoom, lưới, undo/redo; lưu bản PNG mới vào project, không ghi đè ảnh nguồn.
-- Xem crop frame và sequence metadata từ MariaDB khi database có thể kết nối.
-- Lưu tự động vào project JSON; có nút lưu, import và export JSON.
-- Phím tắt map: `B` chọn bút, `E` chọn tẩy, `Ctrl/Cmd + S` lưu.
+1. **🗺️ Map Studio (Bản đồ Nhị phân Chuẩn NSO)**:
+   - Đọc và ghi trực tiếp 179 file nhị phân `Data/Map/{id}` (`TileMap.java`: `tmw`, `tmh`, tile index mảng 1 chiều có giải mã signed key offset).
+   - Render tile 24x24 px (Nearest-Neighbor) từ tileset `Data/Img/Map/{zoom}/tile/{tileId}.png` và background `bg/{bgId}.png`.
+   - Đặt thực thể trực quan kéo thả: NPC, Waypoint (cổng chuyển map), Điểm Spawn Quái vật, vùng đứng chân `locationStand`.
 
-Map project mới hiện lưu một lớp tile. Metadata chi tiết của map nhị phân trong `Data/Map` và các bảng khác chưa được chuyển đổi vào schema project mới. Tool chưa có layer map, collision brush, xuất gói ZIP hoặc nhiều người chỉnh sửa đồng thời. Ảnh upload được xác nhận theo MIME type và phần mở rộng `.png` do client gửi; backend local chỉ nên được dùng bởi người dùng tin cậy.
+2. **🎒 Item & Thú Cưỡi Manager (Items & Mounts)**:
+   - Quản lý danh mục 1,240 vật phẩm trong bảng `item` và `item_option`.
+   - Phân hệ chuyên sâu cho Thú cưỡi (Mounts - type 29..33: Sói, Xe máy, Harley Davidson, Trâu, Hổ, Phượng hoàng băng, Hỏa Kỳ Lân...).
+   - Xem icon phóng to trực tiếp từ `Data/Img/Small/{icon}.png`, sửa tên, cấp độ yêu cầu, options chỉ số.
+
+3. **🥋 Character & Part Studio (Avatar Composer)**:
+   - Quản lý các bộ part từ bảng `nj_part`: Nón/Đầu (Type 0), Thân/Áo (Type 1), Chân/Quần (Type 2), Vũ khí (Type 3).
+   - Lắp ráp avatar và xem trước chuyển động thời gian thực: Đứng yên (Idle), Chạy bộ (Run), Tấn công (Attack).
+   - Tinh chỉnh offset `dx`, `dy` của từng frame part trực quan.
+
+4. **🎬 Quái Vật & Sprite Animation**:
+   - Quản lý metadata Quái vật (`monster`) và Hiệu ứng (`effect_data`).
+   - Slicer cắt lát tọa độ (`sprites`: x, y, w, h), Assembler ghép frame (`frames`: dx, dy, flip, onTop) và Sequence timeline player.
+
+5. **⚡ Snapshot Changeset Engine (Draft & Review)**:
+   - Cơ chế lưu nháp an toàn: Mọi thao tác chỉnh sửa không làm biến đổi file gốc ngay mà được lưu vào bản nháp.
+   - Thanh trạng thái nổi góc dưới cho biết số lượng thay đổi chưa lưu, kèm hộp thoại **Xem Diff**.
+   - Nút **Deploy to Game**: Ghi đè an toàn vào `Data/Map/` và MariaDB với cơ chế tự động sao lưu bản cũ vào `backups/`.
+
+6. **📦 Xuất Gói Đa Nền Tảng (Multi-Target Exporter)**:
+   - **Target 1: NSO Java Server**: Xuất thư mục `Data/Map/` nhị phân và file `patch_migration.sql`.
+   - **Target 2: Unity C# Client**: Xuất cấu trúc thư mục `Assets/Resources/...`, sinh file JSON Animation và script C# mẫu `NsoAnimationPlayer.cs` kéo thả là chạy mượt trên Unity.
+   - **Target 3: Universal Studio ModPack**: Xuất file `.zip` kèm `manifest.json` để chia sẻ hoặc import lại vào Studio khác.
+

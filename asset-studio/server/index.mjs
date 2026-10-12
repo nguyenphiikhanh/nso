@@ -1,42 +1,48 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, readdir, unlink } from 'node:fs/promises'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
 import multer from 'multer'
-import mysql from 'mysql2/promise'
-import { parse as parseYaml } from 'yaml'
-import { createDefaultProject } from './defaultProject.mjs'
+import { readMapBinary } from './mapBinary.mjs'
+import {
+  getDbPool,
+  getAllMaps,
+  getMapById,
+  getItemsList,
+  getItemById,
+  getAllItemOptionTemplates,
+  getAllParts,
+  getAllImages,
+  getMonstersList,
+  getMonsterById,
+} from './db.mjs'
+import { ChangesetEngine } from './changeset.mjs'
+import { createExportPackage, createCharacterExportPackage } from './exporter.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const appRoot = resolve(here, '..')
-const projectDir = resolve(process.env.GAME_PROJECT_DIR || join(appRoot, 'projects', 'default'))
-const sourceImgDir = resolve(process.env.GAME_SOURCE_IMG_DIR || join(appRoot, '..', 'Data', 'Img'))
-const mediaDir = join(projectDir, 'assets')
-const projectFile = join(projectDir, 'project.json')
-const composeFile = resolve(appRoot, '..', 'docker-compose.yml')
+const repoRoot = resolve(appRoot, '..')
+const sourceImgDir = resolve(process.env.GAME_SOURCE_IMG_DIR || join(repoRoot, 'Data', 'Img'))
+const dataMapDir = resolve(process.env.GAME_DATA_MAP_DIR || join(repoRoot, 'Data', 'Map'))
+const backupDir = resolve(appRoot, 'backups')
+const draftFile = resolve(appRoot, 'drafts', 'changeset.json')
+const exportDir = resolve(appRoot, 'exports')
+const mediaDir = join(appRoot, 'projects', 'default', 'assets')
 const port = Number(process.env.PORT || 3001)
-let sourceIndexPromise
-let databasePool
 
 await mkdir(mediaDir, { recursive: true })
+await mkdir(backupDir, { recursive: true })
+await mkdir(exportDir, { recursive: true })
 
-async function readProject() {
-  try {
-    return JSON.parse(await readFile(projectFile, 'utf8'))
-  } catch (error) {
-    if (error.code !== 'ENOENT') throw error
-    const project = createDefaultProject()
-    await writeProject(project)
-    return project
-  }
-}
+const changesetEngine = new ChangesetEngine({
+  draftFile,
+  dataMapDir,
+  backupDir,
+})
 
-async function writeProject(project) {
-  const tempFile = `${projectFile}.${randomUUID()}.tmp`
-  await writeFile(tempFile, `${JSON.stringify(project, null, 2)}\n`, 'utf8')
-  await rename(tempFile, projectFile)
-}
+let sourceIndexPromise
 
 async function listPngs(directory) {
   let entries
@@ -46,68 +52,49 @@ async function listPngs(directory) {
     if (error.code === 'ENOENT') return []
     throw error
   }
-  const nested = await Promise.all(entries.map(async (entry) => {
-    const path = join(directory, entry.name)
-    if (entry.isDirectory()) return listPngs(path)
-    return entry.isFile() && extname(entry.name).toLowerCase() === '.png' ? [path] : []
-  }))
+  const nested = await Promise.all(
+    entries.map(async (entry) => {
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) return listPngs(path)
+      return entry.isFile() && extname(entry.name).toLowerCase() === '.png' ? [path] : []
+    })
+  )
   return nested.flat()
 }
 
 function getSourceIndex() {
   if (!sourceIndexPromise) {
-    sourceIndexPromise = listPngs(sourceImgDir).then((paths) => paths.map((path) => {
-      const relativePath = relative(sourceImgDir, path).split(sep).join('/')
-      const parts = relativePath.split('/')
-      const group = parts[0] || 'Other'
-      const variant = parts.length > 2 ? parts.slice(1, -1).join('/') : parts[1] ? parts[1].replace(/\.png$/i, '') : 'base'
-      const name = parts.at(-1).replace(/\.png$/i, '')
-      const url = `/source-media/${relativePath.split('/').map(encodeURIComponent).join('/')}`
-      return { id: relativePath, name, group, variant, relativePath, url }
-    }).sort((a, b) => a.group.localeCompare(b.group) || a.relativePath.localeCompare(b.relativePath, undefined, { numeric: true })))
+    sourceIndexPromise = listPngs(sourceImgDir).then((paths) =>
+      paths
+        .map((path) => {
+          const relativePath = relative(sourceImgDir, path).split(sep).join('/')
+          const parts = relativePath.split('/')
+          const group = parts[0] || 'Other'
+          const variant =
+            parts.length > 2
+              ? parts.slice(1, -1).join('/')
+              : parts[1]
+                ? parts[1].replace(/\.png$/i, '')
+                : 'base'
+          const name = parts.at(-1).replace(/\.png$/i, '')
+          const url = `/source-media/${relativePath.split('/').map(encodeURIComponent).join('/')}`
+          return { id: relativePath, name, group, variant, relativePath, url }
+        })
+        .sort(
+          (a, b) =>
+            a.group.localeCompare(b.group) ||
+            a.relativePath.localeCompare(b.relativePath, undefined, { numeric: true })
+        )
+    )
   }
   return sourceIndexPromise
-}
-
-async function getDatabasePool() {
-  if (databasePool) return databasePool
-  const compose = parseYaml(await readFile(composeFile, 'utf8'))
-  const database = compose?.services?.mariadb
-  if (!database) throw new Error('Không tìm thấy service mariadb trong docker-compose.yml.')
-  const env = database.environment || {}
-  const mappedPort = (database.ports || []).map((entry) => String(entry).split(':')).find((parts) => parts.at(-1) === '3306')
-  databasePool = mysql.createPool({
-    host: process.env.ASSET_STUDIO_DB_HOST || (process.env.ASSET_STUDIO_IN_DOCKER === '1' ? 'mariadb' : '127.0.0.1'),
-    port: Number(process.env.ASSET_STUDIO_DB_PORT || mappedPort?.at(-2) || 3306),
-    database: process.env.ASSET_STUDIO_DB_NAME || env.MARIADB_DATABASE,
-    user: process.env.ASSET_STUDIO_DB_USER || env.MARIADB_USER,
-    password: process.env.ASSET_STUDIO_DB_PASSWORD || env.MARIADB_PASSWORD,
-    waitForConnections: true,
-    connectionLimit: 2,
-    connectTimeout: 2500,
-  })
-  return databasePool
-}
-
-function isProject(value) {
-  return value && value.version === 1 && typeof value.name === 'string'
-    && value.name.length <= 80 && Array.isArray(value.assets) && Array.isArray(value.maps)
-    && value.maps.every((map) => Number.isInteger(map.width) && Number.isInteger(map.height)
-      && map.width >= 4 && map.height >= 4 && map.width <= 128 && map.height <= 128
-      && Number.isInteger(map.tileSize) && map.tileSize >= 8 && map.tileSize <= 128
-      && Array.isArray(map.tiles) && map.tiles.length === map.width * map.height
-      && map.tiles.every((tileId) => tileId === null || typeof tileId === 'string'))
-    && value.assets.every((asset) => asset && typeof asset.id === 'string'
-      && typeof asset.name === 'string' && asset.name.length <= 64
-      && ['tile', 'item', 'character', 'outfit', 'mount'].includes(asset.kind)
-      && (asset.imageUrl === null || (typeof asset.imageUrl === 'string' && asset.imageUrl.startsWith('/media/')))
-      && asset.properties && typeof asset.properties === 'object')
 }
 
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_request, _file, done) => done(null, mediaDir),
-    filename: (_request, file, done) => done(null, `${randomUUID()}${extname(file.originalname).toLowerCase() || '.png'}`),
+    filename: (_request, file, done) =>
+      done(null, `${randomUUID()}${extname(file.originalname).toLowerCase() || '.png'}`),
   }),
   limits: { fileSize: 10 * 1024 * 1024, files: 1 },
   fileFilter: (_request, file, done) => {
@@ -119,12 +106,347 @@ const upload = multer({
   },
 })
 
+const TRANSPARENT_1X1_PNG = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+  'base64'
+)
+
+function resolveSourceMedia(rawPath) {
+  const subPath = rawPath.replace(/^\/+/, '').split('?')[0]
+  const candidates = [join(sourceImgDir, subPath)]
+
+  if (subPath.startsWith('Small/')) {
+    const raw = subPath.replace(/^Small\//, '').replace(/\.png$/i, '').replace(/^Small/i, '')
+    const num = Number.parseInt(raw, 10)
+    const rawCandidates = [
+      `Small${raw}.png`,
+      `Small1${raw}.png`,
+      `${raw}.png`,
+      `1${raw}.png`,
+    ]
+    if (!Number.isNaN(num)) {
+      rawCandidates.push(`Small${10000 + num}.png`)
+      if (num > 10000) {
+        rawCandidates.push(`Small${num % 10000}.png`, `Small${String(num).slice(1)}.png`)
+      }
+    }
+
+    const scales = ['4', '2', '1', '3', '']
+    for (const s of scales) {
+      for (const rc of rawCandidates) {
+        if (s) {
+          candidates.push(join(sourceImgDir, 'Small', s, rc))
+        } else {
+          candidates.push(join(sourceImgDir, 'Small', rc))
+        }
+      }
+    }
+  } else if (subPath.startsWith('Mob/')) {
+    const raw = subPath.replace(/^Mob\//, '').replace(/\.png$/i, '').replace(/_\d+$/, '')
+    candidates.push(
+      join(sourceImgDir, 'Mob', '4', `${raw}_0.png`),
+      join(sourceImgDir, 'Mob', '2', `${raw}_0.png`),
+      join(sourceImgDir, 'Mob', '1', `${raw}_0.png`),
+      join(sourceImgDir, 'Mob', '4', `${raw}.png`),
+      join(sourceImgDir, 'Mob', '2', `${raw}.png`),
+      join(sourceImgDir, 'Mob', `${raw}.png`)
+    )
+  } else if (subPath.includes('/bg/')) {
+    const parts = subPath.split('/bg/')
+    const baseDir = parts[0]
+    const rawId = parts[1].replace(/\.png$/i, '').replace(/^bg0?/i, '')
+    const padded = rawId.padStart(2, '0')
+    candidates.push(
+      join(sourceImgDir, baseDir, 'bg', `bg${padded}.png`),
+      join(sourceImgDir, baseDir, 'bg', `bg0${rawId}.png`),
+      join(sourceImgDir, baseDir, 'bg', `bg${rawId}.png`),
+      join(sourceImgDir, 'Map', '4', 'bg', `bg${padded}.png`),
+      join(sourceImgDir, 'Map', '4', 'bg', `bg0${rawId}.png`),
+      join(sourceImgDir, 'Map', '4', 'bg', `bg${rawId}.png`)
+    )
+  }
+
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  return null
+}
+
 const app = express()
-app.use(express.json({ limit: '5mb' }))
+app.use(express.json({ limit: '15mb' }))
 app.use('/media', express.static(mediaDir, { immutable: true, maxAge: '1y' }))
-app.use('/source-media', express.static(sourceImgDir, { maxAge: '1h', fallthrough: false }))
+app.use('/api/exports', express.static(exportDir))
+
+// Smart Image Resolver cho NSO Assets
+app.use('/source-media', (request, response) => {
+  const reqSubPath = decodeURIComponent(request.path.replace(/^\/+/, ''))
+  const resolved = resolveSourceMedia(reqSubPath)
+  if (resolved) {
+    response.setHeader('Cache-Control', 'public, max-age=3600')
+    response.sendFile(resolved)
+  } else {
+    // Trả về ảnh 1x1 trong suốt, không bao giờ ném lỗi 500
+    response.setHeader('Content-Type', 'image/png')
+    response.setHeader('Cache-Control', 'public, max-age=3600')
+    response.status(200).send(TRANSPARENT_1X1_PNG)
+  }
+})
+
+
 
 app.get('/api/health', (_request, response) => response.json({ status: 'ok' }))
+
+app.get('/api/database-status', async (_request, response) => {
+  try {
+    const pool = await getDbPool()
+    const [rows] = await pool.query('SELECT 1 AS connected')
+    response.json({ connected: rows[0]?.connected === 1 })
+  } catch (error) {
+    response.json({
+      connected: false,
+      message: 'Chưa kết nối được MariaDB. Kiểm tra container mariadb hoặc mật khẩu.',
+    })
+  }
+})
+
+// ==================== MAP API ====================
+
+app.get('/api/maps', async (_request, response, next) => {
+  try {
+    const dbMaps = await getAllMaps()
+    const draft = await changesetEngine.getChangeset()
+    const draftMapIds = new Set(Object.keys(draft.maps || {}))
+
+    const mapsWithDraftFlag = dbMaps.map((m) => {
+      const isDraftModified = draftMapIds.has(String(m.id))
+      const draftMap = draft.maps?.[String(m.id)]
+      return {
+        ...m,
+        isDraft: isDraftModified,
+        name: isDraftModified ? draftMap.name : m.name,
+        tileId: isDraftModified ? draftMap.tileId : m.tileId,
+        bgId: isDraftModified ? draftMap.bgId : m.bgId,
+      }
+    })
+
+    response.json(mapsWithDraftFlag)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/maps/:id', async (request, response, next) => {
+  try {
+    const id = Number(request.params.id)
+    const dbMap = await getMapById(id)
+    if (!dbMap) {
+      response.status(404).json({ error: 'Không tìm thấy Map trong database.' })
+      return
+    }
+
+    // Đọc binary map tiles
+    let binaryData = null
+    try {
+      binaryData = await readMapBinary(dataMapDir, id)
+    } catch (e) {
+      console.warn(`Chưa có file binary Data/Map/${id}:`, e.message)
+    }
+
+    // Merge với draft nếu có
+    const draft = await changesetEngine.getChangeset()
+    const draftMap = draft.maps?.[String(id)]
+
+    const finalMap = {
+      ...dbMap,
+      tmw: draftMap?.tmw || binaryData?.tmw || 30,
+      tmh: draftMap?.tmh || binaryData?.tmh || 30,
+      tiles: draftMap?.tiles || binaryData?.tiles || [],
+      isDraft: Boolean(draftMap),
+    }
+
+    if (draftMap) {
+      Object.assign(finalMap, draftMap)
+    }
+
+    response.json(finalMap)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/maps/:id/draft', async (request, response, next) => {
+  try {
+    const id = Number(request.params.id)
+    const updated = await changesetEngine.updateEntity('maps', id, request.body)
+    response.json({ status: 'draft_saved', map: updated })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// ==================== ITEM & MOUNT API ====================
+
+app.get('/api/items', async (request, response, next) => {
+  try {
+    const isMount = request.query.isMount === 'true'
+    const type = request.query.type
+    const query = request.query.q ? String(request.query.q).trim() : ''
+    const offset = Math.max(0, Number.parseInt(String(request.query.offset || '0'), 10) || 0)
+    const limit = Math.min(100, Math.max(1, Number.parseInt(String(request.query.limit || '50'), 10) || 50))
+
+    const data = await getItemsList({ type, isMount, query, offset, limit })
+    const draft = await changesetEngine.getChangeset()
+    const draftItemIds = new Set(Object.keys(draft.items || {}))
+
+    const mergedItems = data.items.map((item) => {
+      const isDraftModified = draftItemIds.has(String(item.id))
+      return isDraftModified
+        ? { ...item, ...draft.items[String(item.id)], isDraft: true }
+        : { ...item, isDraft: false }
+    })
+
+    response.json({
+      total: data.total,
+      offset,
+      limit,
+      items: mergedItems,
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/items/:id', async (request, response, next) => {
+  try {
+    const id = Number(request.params.id)
+    const dbItem = await getItemById(id)
+    if (!dbItem) {
+      response.status(404).json({ error: 'Không tìm thấy Item.' })
+      return
+    }
+
+    const draft = await changesetEngine.getChangeset()
+    const draftItem = draft.items?.[String(id)]
+
+    response.json(draftItem ? { ...dbItem, ...draftItem, isDraft: true } : { ...dbItem, isDraft: false })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/items/:id/draft', async (request, response, next) => {
+  try {
+    const id = Number(request.params.id)
+    const updated = await changesetEngine.updateEntity('items', id, request.body)
+    response.json({ status: 'draft_saved', item: updated })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/item-options', async (_request, response, next) => {
+  try {
+    const options = await getAllItemOptionTemplates()
+    response.json(options)
+  } catch (error) {
+    next(error)
+  }
+})
+
+// ==================== PART & AVATAR API ====================
+
+app.get('/api/parts', async (request, response, next) => {
+  try {
+    const type = request.query.type !== undefined ? Number(request.query.type) : null
+    const parts = await getAllParts(type)
+    const draft = await changesetEngine.getChangeset()
+    const draftPartIds = new Set(Object.keys(draft.parts || {}))
+
+    const merged = parts.map((p) => {
+      const isDraftModified = draftPartIds.has(String(p.id))
+      return isDraftModified
+        ? { ...p, ...draft.parts[String(p.id)], isDraft: true }
+        : { ...p, isDraft: false }
+    })
+
+    response.json(merged)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/images', async (_request, response, next) => {
+  try {
+    const images = await getAllImages()
+    response.json(images)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/parts/:id/draft', async (request, response, next) => {
+  try {
+    const id = Number(request.params.id)
+    const updated = await changesetEngine.updateEntity('parts', id, request.body)
+    response.json({ status: 'draft_saved', part: updated })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// ==================== MONSTER & ANIMATION API ====================
+
+app.get('/api/monsters', async (request, response, next) => {
+  try {
+    const query = request.query.q ? String(request.query.q).trim() : ''
+    const offset = Math.max(0, Number.parseInt(String(request.query.offset || '0'), 10) || 0)
+    const limit = Math.min(100, Math.max(1, Number.parseInt(String(request.query.limit || '50'), 10) || 50))
+
+    const data = await getMonstersList({ query, offset, limit })
+    const draft = await changesetEngine.getChangeset()
+    const draftMobIds = new Set(Object.keys(draft.monsters || {}))
+
+    const merged = data.monsters.map((m) => {
+      const isDraft = draftMobIds.has(String(m.id))
+      return isDraft ? { ...m, ...draft.monsters[String(m.id)], isDraft: true } : { ...m, isDraft: false }
+    })
+
+    response.json({ total: data.total, monsters: merged, offset, limit })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.get('/api/monsters/:id', async (request, response, next) => {
+  try {
+    const id = Number(request.params.id)
+    const dbMob = await getMonsterById(id)
+    if (!dbMob) {
+      response.status(404).json({ error: 'Không tìm thấy Quái vật.' })
+      return
+    }
+
+    const draft = await changesetEngine.getChangeset()
+    const draftMob = draft.monsters?.[String(id)]
+
+    response.json(draftMob ? { ...dbMob, ...draftMob, isDraft: true } : { ...dbMob, isDraft: false })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/monsters/:id/draft', async (request, response, next) => {
+  try {
+    const id = Number(request.params.id)
+    const updated = await changesetEngine.updateEntity('monsters', id, request.body)
+    response.json({ status: 'draft_saved', monster: updated })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// ==================== SOURCE ASSETS (IMAGES & ICONS) ====================
+
 app.get('/api/source-assets', async (request, response, next) => {
   try {
     const allAssets = await getSourceIndex()
@@ -132,14 +454,25 @@ app.get('/api/source-assets', async (request, response, next) => {
     const group = typeof request.query.group === 'string' ? request.query.group : ''
     const variant = typeof request.query.variant === 'string' ? request.query.variant : ''
     const query = typeof request.query.q === 'string' ? request.query.q.trim().toLocaleLowerCase() : ''
-    const filtered = allAssets.filter((asset) => (!group || asset.group === group)
-      && (!variant || asset.variant === variant)
-      && (!query || asset.name.toLocaleLowerCase().includes(query) || asset.relativePath.toLocaleLowerCase().includes(query)))
+    const filtered = allAssets.filter(
+      (asset) =>
+        (!group || asset.group === group) &&
+        (!variant || asset.variant === variant) &&
+        (!query ||
+          asset.name.toLocaleLowerCase().includes(query) ||
+          asset.relativePath.toLocaleLowerCase().includes(query))
+    )
     const limit = Math.min(120, Math.max(1, Number.parseInt(String(request.query.limit || '60'), 10) || 60))
     const offset = Math.max(0, Number.parseInt(String(request.query.offset || '0'), 10) || 0)
-    const groupCounts = Object.fromEntries(groups.map((name) => [name, allAssets.filter((asset) => asset.group === name).length]))
-    const variants = [...new Set(allAssets.filter((asset) => !group || asset.group === group).map((asset) => asset.variant))]
-      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    const groupCounts = Object.fromEntries(
+      groups.map((name) => [name, allAssets.filter((asset) => asset.group === name).length])
+    )
+    const variants = [
+      ...new Set(
+        allAssets.filter((asset) => !group || asset.group === group).map((asset) => asset.variant)
+      ),
+    ].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+
     response.json({
       rootAvailable: allAssets.length > 0,
       total: filtered.length,
@@ -153,94 +486,94 @@ app.get('/api/source-assets', async (request, response, next) => {
     next(error)
   }
 })
-app.get('/api/database-status', async (_request, response) => {
+
+// ==================== DRAFT CHANGESET & DEPLOY ====================
+
+app.get('/api/draft', async (_request, response, next) => {
   try {
-    const pool = await getDatabasePool()
-    const [rows] = await pool.query('SELECT 1 AS connected')
-    response.json({ connected: rows[0]?.connected === 1 })
-  } catch (error) {
-    const message = error.code === 'ER_DBACCESS_DENIED_ERROR'
-      ? 'MariaDB phản hồi nhưng user trong compose chưa có quyền đọc database nsoshare.'
-      : error.code === 'ER_BAD_DB_ERROR'
-        ? 'MariaDB phản hồi nhưng chưa có database nsoshare.'
-        : 'Chưa kết nối được MariaDB. Kiểm tra service mariadb và cổng 3306.'
-    response.json({ connected: false, message })
-  }
-})
-app.get('/api/sprite-metadata', async (request, response) => {
-  const group = typeof request.query.group === 'string' ? request.query.group : ''
-  const id = Number.parseInt(String(request.query.id || ''), 10)
-  const tables = {
-    Mob: { table: 'monster', fields: 'id, name, sprites, frames, sequence' },
-    Effect: { table: 'effect_data', fields: 'id, sprites, frames, running' },
-    EffectAuto: { table: 'effect_data_auto', fields: 'id, sprites, frames, running' },
-  }
-  const definition = tables[group]
-  if (!definition || !Number.isSafeInteger(id) || id < 0) {
-    response.status(400).json({ error: 'Không có metadata sprite cho asset này.' })
-    return
-  }
-  try {
-    const pool = await getDatabasePool()
-    const [rows] = await pool.execute(`SELECT ${definition.fields} FROM ${definition.table} WHERE id = ? LIMIT 1`, [id])
-    const row = rows[0]
-    if (!row) {
-      response.status(404).json({ error: 'Không tìm thấy metadata sprite trong MariaDB.' })
-      return
-    }
-    const metadata = Object.fromEntries(Object.entries(row).map(([key, value]) => {
-      if (typeof value !== 'string' || !['sprites', 'frames', 'sequence', 'running'].includes(key)) return [key, value]
-      try { return [key, JSON.parse(value)] } catch { return [key, value] }
-    }))
-    response.json(metadata)
-  } catch {
-    response.status(503).json({ error: 'MariaDB chưa sẵn sàng hoặc schema không tương thích.' })
-  }
-})
-app.get('/api/project', async (_request, response, next) => {
-  try {
-    response.json(await readProject())
+    const summary = await changesetEngine.getSummary()
+    response.json(summary)
   } catch (error) {
     next(error)
   }
-})
-app.put('/api/project', async (request, response, next) => {
-  try {
-    if (!isProject(request.body)) {
-      response.status(400).json({ error: 'Project JSON không đúng cấu trúc hoặc dữ liệu map không hợp lệ.' })
-      return
-    }
-    await writeProject(request.body)
-    response.json({ status: 'saved' })
-  } catch (error) {
-    next(error)
-  }
-})
-app.post('/api/media', (request, response, next) => {
-  upload.single('image')(request, response, async (error) => {
-    if (error) {
-      response.status(400).json({ error: error.message })
-      return
-    }
-    if (!request.file) {
-      response.status(400).json({ error: 'Chưa chọn ảnh PNG.' })
-      return
-    }
-    const header = await readFile(request.file.path).then((data) => data.subarray(0, 8)).catch(() => Buffer.alloc(0))
-    if (!header.equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) {
-      await unlink(request.file.path).catch(() => undefined)
-      response.status(400).json({ error: 'File không có chữ ký ảnh PNG hợp lệ.' })
-      return
-    }
-    response.status(201).json({ imageUrl: `/media/${request.file.filename}` })
-  })
 })
 
-app.get('/api/export', async (_request, response, next) => {
+app.delete('/api/draft/:category/:id', async (request, response, next) => {
   try {
-    const project = await readProject()
-    response.setHeader('Content-Disposition', 'attachment; filename="game-project.json"')
-    response.json(project)
+    const { category, id } = request.params
+    const result = await changesetEngine.revertEntity(category, id)
+    response.json(result)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/draft/clear', async (_request, response, next) => {
+  try {
+    await changesetEngine.clearChangeset()
+    response.json({ status: 'cleared' })
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/draft/deploy', async (_request, response, next) => {
+  try {
+    const deployResults = await changesetEngine.deployAll()
+    response.json({ status: 'deployed', ...deployResults })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// ==================== MULTI-TARGET EXPORT ====================
+
+app.post('/api/export-package', async (request, response, next) => {
+  try {
+    const { target = 'server', selectedIds = {} } = request.body
+    const changeset = await changesetEngine.getChangeset()
+
+    const exportResult = await createExportPackage({
+      target,
+      changeset,
+      dataMapDir,
+      exportDir,
+      selectedIds,
+    })
+
+    response.json(exportResult)
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.post('/api/export-character-unity', async (request, response, next) => {
+  try {
+    const {
+      loadout,
+      actionSequences,
+      actionName,
+      actionSequence,
+      waistOverlap = 8,
+      neckOverlap = 20,
+      fps = 8,
+      parts = [],
+    } = request.body
+
+    const result = await createCharacterExportPackage({
+      loadout,
+      actionSequences,
+      actionName,
+      actionSequence,
+      waistOverlap,
+      neckOverlap,
+      fps,
+      parts,
+      exportDir,
+      resolveSourceMedia,
+    })
+
+    response.json(result)
   } catch (error) {
     next(error)
   }
@@ -255,12 +588,14 @@ app.use((request, response, next) => {
   }
   next()
 })
+
 app.use((error, _request, response, _next) => {
-  console.error(error)
-  response.status(500).json({ error: 'Lỗi nội bộ khi đọc hoặc ghi project.' })
+  console.error('API Error:', error)
+  response.status(500).json({ error: error.message || 'Lỗi xử lý API.' })
 })
 
 app.listen(port, '127.0.0.1', () => {
-  console.log(`Game Asset Studio API: http://127.0.0.1:${port}`)
-  console.log(`Project folder: ${projectDir}`)
+  console.log(`NSO Asset Studio API chạy tại: http://127.0.0.1:${port}`)
+  console.log(`Data Map: ${dataMapDir}`)
+  console.log(`Data Img: ${sourceImgDir}`)
 })
