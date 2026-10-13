@@ -33,6 +33,12 @@ export interface NsoMonsterSpawn {
   status?: number
 }
 
+export interface NsoTreeObject {
+  x: number
+  y: number
+  id: number
+}
+
 export interface NsoMapDetail extends NsoMapSummary {
   tmw: number
   tmh: number
@@ -41,9 +47,9 @@ export interface NsoMapDetail extends NsoMapSummary {
   waypoint: NsoWaypointSpawn[]
   monster: NsoMonsterSpawn[]
   locationStand: number[][]
-  behind: any[]
-  betwen: any[]
-  front: any[]
+  behind: NsoTreeObject[]
+  betwen: NsoTreeObject[]
+  front: NsoTreeObject[]
 }
 
 export interface NsoItem {
@@ -95,6 +101,19 @@ export interface NsoFramePart {
   onTop: number
 }
 
+export interface NsoMonsterSummary {
+  id: number
+  name: string
+  level: number
+  boss: boolean | number
+  type: number
+  hp: number
+  speed: number
+  n_img: number
+  is_composite?: boolean | number
+  isDraft?: boolean
+}
+
 export interface NsoMonsterDetail {
   id: number
   name: string
@@ -111,6 +130,9 @@ export interface NsoMonsterDetail {
   sprites: NsoSpriteSlice[]
   frames: NsoFramePart[][]
   sequence: number[]
+  frame_char?: any[]
+  index_splash?: any[]
+  is_composite?: boolean | number
   isDraft?: boolean
 }
 

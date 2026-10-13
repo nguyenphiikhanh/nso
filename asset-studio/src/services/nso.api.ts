@@ -4,6 +4,7 @@ import type {
   NsoItem,
   NsoItemOptionTemplate,
   NsoPart,
+  NsoMonsterSummary,
   NsoMonsterDetail,
   ChangesetSummary,
 } from '../types/nso'
@@ -93,7 +94,7 @@ export function fetchMonstersList(params: {
   q?: string
   offset?: number
   limit?: number
-}): Promise<{ total: number; offset: number; limit: number; monsters: any[] }> {
+}): Promise<{ total: number; offset: number; limit: number; monsters: NsoMonsterSummary[] }> {
   const qry = new URLSearchParams()
   if (params.q) qry.set('q', params.q)
   if (params.offset) qry.set('offset', String(params.offset))

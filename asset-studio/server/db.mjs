@@ -243,7 +243,7 @@ export async function getMonstersList({ query, offset = 0, limit = 50 }) {
   const total = countRows[0].total
 
   const [rows] = await p.query(
-    `SELECT id, name, level, boss, type, hp, speed, n_img FROM monster ${whereSql} ORDER BY id ASC LIMIT ? OFFSET ?`,
+    `SELECT id, name, level, boss, type, hp, speed, n_img, (sprites IS NOT NULL AND JSON_LENGTH(sprites) > 0) AS is_composite FROM monster ${whereSql} ORDER BY id ASC LIMIT ? OFFSET ?`,
     [...values, limit, offset]
   )
 
@@ -256,15 +256,19 @@ export async function getMonsterById(id) {
   const row = rows[0]
   if (!row) return null
 
+  const parsedSprites = parseJsonSafe(row.sprites) || []
+  const parsedFrames = parseJsonSafe(row.frames) || []
+
   return {
     ...row,
-    move: parseJsonSafe(row.move),
-    attack: parseJsonSafe(row.attack),
-    sprites: parseJsonSafe(row.sprites),
-    frames: parseJsonSafe(row.frames),
-    sequence: parseJsonSafe(row.sequence),
-    frame_char: parseJsonSafe(row.frame_char),
-    index_splash: parseJsonSafe(row.index_splash),
+    move: parseJsonSafe(row.move) || [],
+    attack: parseJsonSafe(row.attack) || [],
+    sprites: parsedSprites,
+    frames: parsedFrames,
+    sequence: parseJsonSafe(row.sequence) || [],
+    frame_char: parseJsonSafe(row.frame_char) || [],
+    index_splash: parseJsonSafe(row.index_splash) || [],
+    is_composite: parsedSprites.length > 0 && parsedFrames.length > 0 ? 1 : 0,
   }
 }
 

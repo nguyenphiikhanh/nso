@@ -142,15 +142,22 @@ function resolveSourceMedia(rawPath) {
       }
     }
   } else if (subPath.startsWith('Mob/')) {
-    const raw = subPath.replace(/^Mob\//, '').replace(/\.png$/i, '').replace(/_\d+$/, '')
-    candidates.push(
-      join(sourceImgDir, 'Mob', '4', `${raw}_0.png`),
-      join(sourceImgDir, 'Mob', '2', `${raw}_0.png`),
-      join(sourceImgDir, 'Mob', '1', `${raw}_0.png`),
-      join(sourceImgDir, 'Mob', '4', `${raw}.png`),
-      join(sourceImgDir, 'Mob', '2', `${raw}.png`),
-      join(sourceImgDir, 'Mob', `${raw}.png`)
-    )
+    const cleaned = subPath.replace(/^Mob\//, '').replace(/\.png$/i, '')
+    const parts = cleaned.split('/')
+    let scale = ''
+    let filename = cleaned
+    if (parts.length > 1) {
+      scale = parts[0]
+      filename = parts.slice(1).join('/')
+    }
+    const scalesToTry = scale ? [scale, '4', '2', '1', ''] : ['4', '2', '1', '']
+    for (const s of scalesToTry) {
+      const baseDir = s ? join(sourceImgDir, 'Mob', s) : join(sourceImgDir, 'Mob')
+      candidates.push(join(baseDir, `${filename}.png`))
+      if (!filename.includes('_')) {
+        candidates.push(join(baseDir, `${filename}_0.png`))
+      }
+    }
   } else if (subPath.includes('/bg/')) {
     const parts = subPath.split('/bg/')
     const baseDir = parts[0]
@@ -400,7 +407,7 @@ app.get('/api/monsters', async (request, response, next) => {
   try {
     const query = request.query.q ? String(request.query.q).trim() : ''
     const offset = Math.max(0, Number.parseInt(String(request.query.offset || '0'), 10) || 0)
-    const limit = Math.min(100, Math.max(1, Number.parseInt(String(request.query.limit || '50'), 10) || 50))
+    const limit = Math.min(500, Math.max(1, Number.parseInt(String(request.query.limit || '50'), 10) || 50))
 
     const data = await getMonstersList({ query, offset, limit })
     const draft = await changesetEngine.getChangeset()
