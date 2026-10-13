@@ -218,11 +218,10 @@ export async function getAllImages() {
 
 export async function updatePartInDb(id, type, partFrames) {
   const p = await getDbPool()
-  await p.execute('UPDATE nj_part SET type = ?, part = ? WHERE id = ?', [
-    type,
-    JSON.stringify(partFrames),
-    id,
-  ])
+  await p.execute(
+    'INSERT INTO nj_part (id, type, part) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE type = VALUES(type), part = VALUES(part)',
+    [id, type, JSON.stringify(partFrames)]
+  )
   return { success: true }
 }
 

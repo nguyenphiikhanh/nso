@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, readdir, unlink } from 'node:fs/promises'
+import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import express from 'express'
@@ -113,7 +113,7 @@ const TRANSPARENT_1X1_PNG = Buffer.from(
 
 function resolveSourceMedia(rawPath) {
   const subPath = rawPath.replace(/^\/+/, '').split('?')[0]
-  const candidates = [join(sourceImgDir, subPath)]
+  const candidates = [join(mediaDir, subPath), join(sourceImgDir, subPath)]
 
   if (subPath.startsWith('Small/')) {
     const raw = subPath.replace(/^Small\//, '').replace(/\.png$/i, '').replace(/^Small/i, '')
@@ -135,8 +135,10 @@ function resolveSourceMedia(rawPath) {
     for (const s of scales) {
       for (const rc of rawCandidates) {
         if (s) {
+          candidates.push(join(mediaDir, 'Small', s, rc))
           candidates.push(join(sourceImgDir, 'Small', s, rc))
         } else {
+          candidates.push(join(mediaDir, 'Small', rc))
           candidates.push(join(sourceImgDir, 'Small', rc))
         }
       }
@@ -376,6 +378,15 @@ app.get('/api/parts', async (request, response, next) => {
         : { ...p, isDraft: false }
     })
 
+    // Tích hợp các Part tự thiết kế mới từ bản nháp
+    for (const [idStr, draftPart] of Object.entries(draft.parts || {})) {
+      if (!parts.some((p) => String(p.id) === idStr)) {
+        if (type === null || draftPart.type === type) {
+          merged.push({ ...draftPart, id: Number(idStr), isDraft: true, isCustom: true })
+        }
+      }
+    }
+
     response.json(merged)
   } catch (error) {
     next(error)
@@ -396,6 +407,75 @@ app.put('/api/parts/:id/draft', async (request, response, next) => {
     const id = Number(request.params.id)
     const updated = await changesetEngine.updateEntity('parts', id, request.body)
     response.json({ status: 'draft_saved', part: updated })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// Tạo Part trang phục mới từ các lát cắt Sprite Sheet
+app.post('/api/custom-parts/slice', async (request, response, next) => {
+  try {
+    const { name, type, slices } = request.body
+    if (type === undefined || !Array.isArray(slices) || slices.length === 0) {
+      return response.status(400).json({ error: 'Cần cung cấp loại bộ phận (type) và danh sách slices.' })
+    }
+
+    const allPartsList = await getAllParts()
+    const draft = await changesetEngine.getChangeset()
+    const existingPartIds = [
+      ...allPartsList.map((p) => p.id),
+      ...Object.keys(draft.parts || {}).map(Number),
+    ].filter((id) => !Number.isNaN(id))
+
+    // ID trang phục mới: Bắt đầu từ 50000 hoặc max + 1
+    const newPartId = Math.max(50000, ...(existingPartIds.length ? existingPartIds : [50000])) + 1
+
+    // Thư mục lưu trữ Small Image của workspace
+    const smallDir = join(mediaDir, 'Small')
+    const small4Dir = join(mediaDir, 'Small', '4')
+    await mkdir(smallDir, { recursive: true })
+    await mkdir(small4Dir, { recursive: true })
+
+    const existingSmallFiles = await readdir(smallDir).catch(() => [])
+    const existingSmallIds = existingSmallFiles
+      .map((f) => {
+        const m = f.match(/(\d+)/)
+        return m ? Number(m[1]) : 0
+      })
+      .filter((n) => n > 0)
+    let nextSmallId = Math.max(90000, ...(existingSmallIds.length ? existingSmallIds : [90000])) + 1
+
+    const partFrames = []
+    for (const slice of slices) {
+      const smallId = nextSmallId++
+      const base64Data = (slice.dataUrl || '').replace(/^data:image\/\w+;base64,/, '')
+      const buffer = Buffer.from(base64Data, 'base64')
+
+      // Ghi ảnh cắt ra mediaDir/Small
+      await writeFile(join(smallDir, `${smallId}.png`), buffer)
+      await writeFile(join(smallDir, `Small${smallId}.png`), buffer)
+      await writeFile(join(small4Dir, `Small${smallId}.png`), buffer)
+
+      partFrames.push({
+        id: smallId,
+        dx: Number(slice.dx) || 0,
+        dy: Number(slice.dy) || 0,
+      })
+    }
+
+    const newPartData = {
+      id: newPartId,
+      type: Number(type),
+      name: name ? String(name).trim() : `Custom Part #${newPartId}`,
+      part: partFrames,
+      isCustom: true,
+    }
+
+    await changesetEngine.updateEntity('parts', newPartId, newPartData)
+    response.json({
+      status: 'ok',
+      part: { ...newPartData, isDraft: true },
+    })
   } catch (error) {
     next(error)
   }

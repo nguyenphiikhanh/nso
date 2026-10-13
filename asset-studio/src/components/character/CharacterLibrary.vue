@@ -16,6 +16,7 @@ const emit = defineEmits<{
   (e: 'set-starter'): void
   (e: 'set-sasuke'): void
   (e: 'randomize'): void
+  (e: 'open-slicer'): void
 }>()
 
 const librarySearch = ref('')
@@ -54,6 +55,13 @@ function getThumb(part: NsoPart): string | null {
       <div class="lib-title-row">
         <h3 class="lib-title">📦 Kho Trang Phục (Parts)</h3>
         <span class="lib-badge">{{ allParts.length }}</span>
+      </div>
+
+      <!-- Nút nhập Sprite Sheet mới -->
+      <div class="import-action-row">
+        <button class="btn-import-sheet" @click="emit('open-slicer')">
+          ✂️ Nhập Sprite Sheet Mới
+        </button>
       </div>
 
       <!-- Preset nhanh -->
@@ -135,8 +143,9 @@ function getThumb(part: NsoPart): string | null {
           <span v-if="p.isDraft" class="draft-indicator">★</span>
         </div>
         <div class="card-meta">
-          <span class="card-title">#{{ p.id }}</span>
-          <span class="card-frames-cnt">{{ p.part?.length || 0 }}F</span>
+          <span class="card-title" :title="String((p as any).name || p.id)">{{ (p as any).name || `#${p.id}` }}</span>
+          <span v-if="(p as any).isCustom" class="custom-badge">MỚI</span>
+          <span v-else class="card-frames-cnt">{{ p.part?.length || 0 }}F</span>
         </div>
       </div>
     </div>
@@ -314,16 +323,59 @@ function getThumb(part: NsoPart): string | null {
   justify-content: space-between;
   align-items: center;
   font-size: 10px;
+  gap: 4px;
 }
 
 .card-title {
   color: #E9EFEB;
   font-weight: 600;
   font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .card-frames-cnt {
   color: #98A6A1;
   font-size: 9px;
+  flex-shrink: 0;
+}
+
+.import-action-row {
+  margin-top: 2px;
+}
+
+.btn-import-sheet {
+  width: 100%;
+  padding: 6px 10px;
+  background-color: #293A21;
+  border: 1px solid #B9F36B;
+  color: #B9F36B;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.btn-import-sheet:hover {
+  background-color: #B9F36B;
+  color: #18210F;
+  box-shadow: 0 0 10px rgba(185, 243, 107, 0.3);
+}
+
+.custom-badge {
+  background-color: #B9F36B;
+  color: #18210F;
+  font-size: 8px;
+  font-weight: 800;
+  padding: 1px 3px;
+  border-radius: 2px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
 }
 </style>

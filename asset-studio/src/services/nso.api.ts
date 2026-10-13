@@ -89,6 +89,18 @@ export function savePartDraft(
   })
 }
 
+export function createCustomPartFromSlices(data: {
+  name: string
+  type: number
+  slices: Array<{ dataUrl: string; dx?: number; dy?: number }>
+}): Promise<{ status: string; part: NsoPart }> {
+  return requestJson<{ status: string; part: NsoPart }>('/api/custom-parts/slice', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
 // Monsters & Animations
 export function fetchMonstersList(params: {
   q?: string

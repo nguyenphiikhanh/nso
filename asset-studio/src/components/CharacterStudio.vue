@@ -10,12 +10,14 @@ import CharacterStage from './character/CharacterStage.vue'
 import CharacterTimeline from './character/CharacterTimeline.vue'
 import CharacterInspector from './character/CharacterInspector.vue'
 import CharacterUnityExportModal from './CharacterUnityExportModal.vue'
+import SpriteSheetImportModal from './character/SpriteSheetImportModal.vue'
 
 const emit = defineEmits<{
   (e: 'draft-updated'): void
 }>()
 
 const showUnityExportModal = ref(false)
+const showSpriteSheetModal = ref(false)
 
 const allParts = ref<NsoPart[]>([])
 const allImages = ref<Array<{ id: number; smallImage: number[] }>>([])
@@ -621,20 +623,32 @@ async function saveEditingPart() {
   }
 }
 
-// Lifecycle
-onMounted(async () => {
-  window.addEventListener('keydown', handleKeyDown)
+// Data Loading & Refresh
+async function loadPartsData() {
   loading.value = true
   try {
     const [pList, imgList] = await Promise.all([fetchAllParts(), fetchAllImages()])
     allParts.value = pList
     allImages.value = imgList
-    startAnimationTimer()
   } catch (err) {
     console.error('Lỗi tải dữ liệu avatar:', err)
   } finally {
     loading.value = false
   }
+}
+
+async function handlePartCreated(newPart: NsoPart) {
+  await loadPartsData()
+  equipPart(newPart)
+  emit('draft-updated')
+  showToast(`✨ Đã tạo và mặc thử trang phục mới #${newPart.id}!`)
+}
+
+// Lifecycle
+onMounted(async () => {
+  window.addEventListener('keydown', handleKeyDown)
+  await loadPartsData()
+  startAnimationTimer()
 })
 
 onUnmounted(() => {
@@ -656,6 +670,7 @@ onUnmounted(() => {
       @set-starter="setPresetStarter"
       @set-sasuke="setPresetSasuke"
       @randomize="randomizeLoadout"
+      @open-slicer="showSpriteSheetModal = true"
     />
 
     <!-- CENTER VIEWPORT: SÂN KHẤU & TIMELINE -->
@@ -936,6 +951,7 @@ onUnmounted(() => {
       @duplicate-action-step="duplicateActionStep"
       @delete-action-step="deleteActionStep"
       @reset-current-action="resetCurrentAction"
+      @notify="showToast"
       @save-editing-part="saveEditingPart"
       @nudge="nudge"
       @reset-offset="resetOffset"
@@ -975,6 +991,13 @@ onUnmounted(() => {
       :weapon-layer-order="weaponLayerOrder"
       :sprite-dimensions="spriteDimensions"
       @close="showUnityExportModal = false"
+    />
+
+    <!-- Modal Nhập Sprite Sheet & Tự Thiết Kế -->
+    <SpriteSheetImportModal
+      v-if="showSpriteSheetModal"
+      @close="showSpriteSheetModal = false"
+      @part-created="handlePartCreated"
     />
   </div>
 </template>

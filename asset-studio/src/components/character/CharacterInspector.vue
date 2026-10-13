@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import { ref, computed } from 'vue'
 import type { NsoPart, NsoPartImage } from '../../types/nso'
 import type {
   ActionDefinitionItem,
   ActionStepItem,
   CharacterCategory,
 } from '../../types/character'
+import { ensureStepPartOffsets } from '../../composables/useCharacterActions'
 
 const props = defineProps<{
   studioMode: 'align' | 'animate'
@@ -64,6 +66,7 @@ const emit = defineEmits<{
   (e: 'duplicate-action-step'): void
   (e: 'delete-action-step'): void
   (e: 'reset-current-action'): void
+  (e: 'notify', msg: string): void
   // Align Mode emits
   (e: 'save-editing-part'): void
   (e: 'nudge', dx: number, dy: number): void
@@ -84,6 +87,202 @@ function getPartZ(cat: CharacterCategory | 'mask'): number {
   if (!props.currentStepData?.zIndices) return 1
   return props.currentStepData.zIndices[cat] ?? 1
 }
+
+function getCategoryLabel(cat: CharacterCategory): string {
+  switch (cat) {
+    case 'head': return 'Đầu'
+    case 'body': return 'Thân'
+    case 'leg': return 'Chân'
+    case 'weapon': return 'Kiếm'
+  }
+}
+
+// ==================== CLIPBOARD CHO THÔNG SỐ BỘ PHẬN NHỊP ====================
+interface PartClipboardData {
+  mode: 'single' | 'all'
+  category?: CharacterCategory
+  categoryLabel?: string
+  dx: number
+  dy: number
+  rot?: number
+  zIndex: number
+  allParts?: {
+    head: { dx: number; dy: number; zIndex: number }
+    body: { dx: number; dy: number; zIndex: number }
+    leg: { dx: number; dy: number; zIndex: number }
+    weapon: { dx: number; dy: number; rot: number; zIndex: number }
+  }
+}
+
+const partClipboard = ref<PartClipboardData | null>(null)
+const copyFlashMsg = ref<string | null>(null)
+let copyFlashTimer: ReturnType<typeof setTimeout> | null = null
+
+function showFeedback(msg: string) {
+  copyFlashMsg.value = msg
+  emit('notify', msg)
+  if (copyFlashTimer) clearTimeout(copyFlashTimer)
+  copyFlashTimer = setTimeout(() => {
+    copyFlashMsg.value = null
+  }, 3500)
+}
+
+function copyCurrentPart() {
+  if (!props.currentStepData) return
+  ensureStepPartOffsets(props.currentStepData)
+  const cat = props.activeEditCategory
+  let dx = 0
+  let dy = 0
+  let rot: number | undefined = undefined
+
+  if (cat === 'head') {
+    dx = props.currentStepData.headOffset?.dx ?? 0
+    dy = props.currentStepData.headOffset?.dy ?? 0
+  } else if (cat === 'body') {
+    dx = props.currentStepData.bodyOffset?.dx ?? 0
+    dy = props.currentStepData.bodyOffset?.dy ?? 0
+  } else if (cat === 'leg') {
+    dx = props.currentStepData.legOffset?.dx ?? 0
+    dy = props.currentStepData.legOffset?.dy ?? 0
+  } else if (cat === 'weapon') {
+    dx = props.currentStepData.weaponOffset?.dx ?? 0
+    dy = props.currentStepData.weaponOffset?.dy ?? 0
+    rot = props.currentStepData.weaponOffset?.rot ?? 0
+  }
+  const zIndex = getPartZ(cat)
+
+  partClipboard.value = {
+    mode: 'single',
+    category: cat,
+    categoryLabel: getCategoryLabel(cat),
+    dx,
+    dy,
+    rot,
+    zIndex,
+  }
+
+  showFeedback(
+    `📋 Đã copy thông số ${getCategoryLabel(cat)} (dx: ${dx}, dy: ${dy}${rot !== undefined ? `, rot: ${rot}°` : ''}, z: ${zIndex})`
+  )
+}
+
+function copyAllParts() {
+  if (!props.currentStepData) return
+  ensureStepPartOffsets(props.currentStepData)
+  const s = props.currentStepData
+  partClipboard.value = {
+    mode: 'all',
+    dx: 0,
+    dy: 0,
+    zIndex: 1,
+    allParts: {
+      head: {
+        dx: s.headOffset?.dx ?? 0,
+        dy: s.headOffset?.dy ?? 0,
+        zIndex: getPartZ('head'),
+      },
+      body: {
+        dx: s.bodyOffset?.dx ?? 0,
+        dy: s.bodyOffset?.dy ?? 0,
+        zIndex: getPartZ('body'),
+      },
+      leg: {
+        dx: s.legOffset?.dx ?? 0,
+        dy: s.legOffset?.dy ?? 0,
+        zIndex: getPartZ('leg'),
+      },
+      weapon: {
+        dx: s.weaponOffset?.dx ?? 0,
+        dy: s.weaponOffset?.dy ?? 0,
+        rot: s.weaponOffset?.rot ?? 0,
+        zIndex: getPartZ('weapon'),
+      },
+    },
+  }
+
+  showFeedback(`📋 Đã copy thông số cả 4 bộ phận ở Nhịp #${props.activeStepIndex + 1}`)
+}
+
+function applyClipboardToStep(targetStep: ActionStepItem, targetCat: CharacterCategory): void {
+  if (!partClipboard.value) return
+  ensureStepPartOffsets(targetStep)
+
+  if (partClipboard.value.mode === 'single') {
+    const { dx, dy, rot, zIndex } = partClipboard.value
+    if (targetCat === 'head') {
+      targetStep.headOffset = { dx, dy }
+    } else if (targetCat === 'body') {
+      targetStep.bodyOffset = { dx, dy }
+    } else if (targetCat === 'leg') {
+      targetStep.legOffset = { dx, dy }
+    } else if (targetCat === 'weapon') {
+      targetStep.weaponOffset = {
+        dx,
+        dy,
+        rot: typeof rot === 'number' ? rot : (targetStep.weaponOffset?.rot ?? 0),
+      }
+    }
+    if (!targetStep.zIndices) {
+      targetStep.zIndices = { head: 1, body: 1, leg: 1, weapon: 1, mask: 1 }
+    }
+    targetStep.zIndices[targetCat] = zIndex
+  } else if (partClipboard.value.mode === 'all' && partClipboard.value.allParts) {
+    const { head, body, leg, weapon } = partClipboard.value.allParts
+    targetStep.headOffset = { dx: head.dx, dy: head.dy }
+    targetStep.bodyOffset = { dx: body.dx, dy: body.dy }
+    targetStep.legOffset = { dx: leg.dx, dy: leg.dy }
+    targetStep.weaponOffset = { dx: weapon.dx, dy: weapon.dy, rot: weapon.rot }
+    if (!targetStep.zIndices) {
+      targetStep.zIndices = { head: 1, body: 1, leg: 1, weapon: 1, mask: 1 }
+    }
+    targetStep.zIndices.head = head.zIndex
+    targetStep.zIndices.body = body.zIndex
+    targetStep.zIndices.leg = leg.zIndex
+    targetStep.zIndices.weapon = weapon.zIndex
+  }
+}
+
+function pasteToCurrentStep() {
+  if (!partClipboard.value || !props.currentStepData) return
+  applyClipboardToStep(props.currentStepData, props.activeEditCategory)
+
+  if (partClipboard.value.mode === 'single') {
+    const label = getCategoryLabel(props.activeEditCategory)
+    showFeedback(
+      `📥 Đã dán vào ${label} ở Nhịp #${props.activeStepIndex + 1} (dx: ${partClipboard.value.dx}, dy: ${partClipboard.value.dy}, z: ${partClipboard.value.zIndex})`
+    )
+  } else {
+    showFeedback(`📥 Đã dán thông số cả 4 bộ phận vào Nhịp #${props.activeStepIndex + 1}`)
+  }
+}
+
+function pasteToAllSteps() {
+  if (!partClipboard.value || !props.currentActionDef?.steps) return
+  const steps = props.currentActionDef.steps
+  for (const step of steps) {
+    applyClipboardToStep(step, props.activeEditCategory)
+  }
+
+  if (partClipboard.value.mode === 'single') {
+    const label = getCategoryLabel(props.activeEditCategory)
+    showFeedback(`⚡ Đã dán thông số ${label} cho TOÀN BỘ ${steps.length} nhịp!`)
+  } else {
+    showFeedback(`⚡ Đã dán thông số cả 4 bộ phận cho TOÀN BỘ ${steps.length} nhịp!`)
+  }
+}
+
+function clearClipboard() {
+  partClipboard.value = null
+  showFeedback('🗑️ Đã xóa bộ nhớ tạm căn vị trí')
+}
+
+const clipboardSummary = computed(() => {
+  if (!partClipboard.value) return null
+  if (partClipboard.value.mode === 'single') {
+    return `${partClipboard.value.categoryLabel}: dx=${partClipboard.value.dx}, dy=${partClipboard.value.dy}, z=${partClipboard.value.zIndex}`
+  }
+  return `Cả 4 bộ phận (Đầu, Thân, Chân, Kiếm)`
+})
 </script>
 
 <template>
@@ -381,6 +580,60 @@ function getPartZ(cat: CharacterCategory | 'mask'): number {
           >
             ⚔️ Kiếm
           </button>
+        </div>
+
+        <!-- Bộ Công Cụ Copy / Dán Vị Trí & Lớp Của Bộ Phận -->
+        <div class="step-part-clipboard-bar">
+          <div class="spc-grid">
+            <button
+              class="btn-spc"
+              :title="`Sao chép thông số (dx, dy, z) của ${getCategoryLabel(activeEditCategory)} ở nhịp này`"
+              @click="copyCurrentPart"
+            >
+              📋 Copy {{ getCategoryLabel(activeEditCategory) }}
+            </button>
+            <button
+              class="btn-spc"
+              title="Sao chép toàn bộ vị trí 4 bộ phận (Đầu, Thân, Chân, Kiếm) ở nhịp này"
+              @click="copyAllParts"
+            >
+              📦 Copy Cả 4 Khớp
+            </button>
+            <button
+              class="btn-spc btn-spc-paste"
+              :disabled="!partClipboard"
+              :title="partClipboard ? (partClipboard.mode === 'single' ? `Dán thông số vào ${getCategoryLabel(activeEditCategory)} ở nhịp này` : 'Dán cả 4 bộ phận vào nhịp này') : 'Chưa có dữ liệu copy'"
+              @click="pasteToCurrentStep"
+            >
+              <template v-if="!partClipboard">📥 Dán Nhịp Này</template>
+              <template v-else-if="partClipboard.mode === 'all'">📥 Dán Cả 4 Khớp</template>
+              <template v-else>📥 Dán Vào {{ getCategoryLabel(activeEditCategory) }}</template>
+            </button>
+            <button
+              class="btn-spc btn-spc-paste-all"
+              :disabled="!partClipboard || currentStepCount <= 1"
+              :title="partClipboard ? (partClipboard.mode === 'single' ? `Dán thông số ${getCategoryLabel(activeEditCategory)} cho toàn bộ ${currentStepCount} nhịp` : `Dán cả 4 bộ phận cho toàn bộ ${currentStepCount} nhịp`) : 'Chưa có dữ liệu copy'"
+              @click="pasteToAllSteps"
+            >
+              <template v-if="!partClipboard">⚡ Dán Mọi Nhịp</template>
+              <template v-else-if="partClipboard.mode === 'all'">⚡ Dán Cả 4 Mọi Nhịp</template>
+              <template v-else>⚡ Dán {{ getCategoryLabel(activeEditCategory) }} Mọi Nhịp</template>
+            </button>
+          </div>
+
+          <!-- Thông tin dữ liệu đang lưu trong bộ nhớ tạm -->
+          <div v-if="partClipboard" class="spc-status-row">
+            <div class="spc-status-info">
+              <span class="spc-status-tag">📋 Sẵn sàng:</span>
+              <span class="spc-status-desc">{{ clipboardSummary }}</span>
+            </div>
+            <button class="spc-clear-btn" title="Hủy / Xóa bộ nhớ tạm" @click="clearClipboard">✕</button>
+          </div>
+
+          <!-- Phản hồi thao tác nhanh -->
+          <div v-if="copyFlashMsg" class="spc-flash-toast">
+            {{ copyFlashMsg }}
+          </div>
         </div>
 
         <!-- D-Pad điều hướng trực quan cho nhịp này -->
@@ -1059,6 +1312,140 @@ function getPartZ(cat: CharacterCategory | 'mask'): number {
   border-color: #B9F36B;
   color: #B9F36B;
   font-weight: 600;
+}
+
+/* Clipboard Toolbar for Step Part Offsets */
+.step-part-clipboard-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background-color: #101416;
+  border: 1px solid #344143;
+  border-radius: 4px;
+  padding: 6px;
+}
+
+.spc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.btn-spc {
+  background-color: #20282A;
+  color: #E9EFEB;
+  border: 1px solid #344143;
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.12s ease;
+}
+
+.btn-spc:hover:not(:disabled) {
+  background-color: #293335;
+  border-color: #B9F36B;
+  color: #B9F36B;
+}
+
+.btn-spc:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.btn-spc:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+  border-color: #283335;
+  color: #657572;
+}
+
+.btn-spc.btn-spc-paste:not(:disabled) {
+  background-color: rgba(185, 243, 107, 0.08);
+  border-color: rgba(185, 243, 107, 0.45);
+  color: #B9F36B;
+}
+
+.btn-spc.btn-spc-paste:hover:not(:disabled) {
+  background-color: rgba(185, 243, 107, 0.18);
+  border-color: #B9F36B;
+}
+
+.btn-spc.btn-spc-paste-all:not(:disabled) {
+  background-color: rgba(241, 167, 115, 0.08);
+  border-color: rgba(241, 167, 115, 0.45);
+  color: #F1A773;
+}
+
+.btn-spc.btn-spc-paste-all:hover:not(:disabled) {
+  background-color: rgba(241, 167, 115, 0.18);
+  border-color: #F1A773;
+}
+
+.spc-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 5px;
+  background-color: rgba(0, 0, 0, 0.4);
+  border: 1px dashed #344143;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.spc-status-info {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.spc-status-tag {
+  color: #98A6A1;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.spc-status-desc {
+  color: #B9F36B;
+  font-family: monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spc-clear-btn {
+  background: transparent;
+  border: none;
+  color: #98A6A1;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 4px;
+  line-height: 1;
+  border-radius: 2px;
+}
+
+.spc-clear-btn:hover {
+  color: #EF7772;
+  background-color: rgba(239, 119, 114, 0.15);
+}
+
+.spc-flash-toast {
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  text-align: center;
+  background-color: rgba(185, 243, 107, 0.12);
+  border: 1px solid #B9F36B;
+  color: #B9F36B;
+  animation: fadeIn 0.15s ease-in-out;
 }
 
 .dpad-container {
