@@ -101,6 +101,24 @@ export function createCustomPartFromSlices(data: {
   })
 }
 
+export function resizePartFrameImage(data: {
+  smallId: number
+  dataUrl: string
+  targetW: number
+  targetH: number
+  partId?: number
+}): Promise<{ status: string; smallId: number; w: number; h: number }> {
+  return requestJson<{ status: string; smallId: number; w: number; h: number }>(
+    '/api/custom-parts/resize-frame',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }
+  )
+}
+
+
 // Monsters & Animations
 export function fetchMonstersList(params: {
   q?: string

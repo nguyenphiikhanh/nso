@@ -1,8 +1,81 @@
 {
   "version": 1,
-  "updatedAt": "2026-10-13T10:15:33.407Z",
+  "updatedAt": "2026-10-14T11:20:22.030Z",
   "maps": {},
   "items": {},
-  "parts": {},
+  "parts": {
+    "50001": {
+      "id": 50001,
+      "type": 0,
+      "name": "Trang Phục cdb6478d-6e9b-40b3-a074-d6cbeb0fc4e4",
+      "part": [
+        {
+          "id": 90004,
+          "dx": 0,
+          "dy": 0
+        },
+        {
+          "id": 90005,
+          "dx": 0,
+          "dy": 0
+        },
+        {
+          "id": 90006,
+          "dx": 0,
+          "dy": 0
+        }
+      ],
+      "isCustom": true,
+      "_modifiedAt": "2026-10-14T11:20:22.030Z",
+      "isDraft": true,
+      "updatedAt": "2026-10-14T11:20:22.030Z"
+    },
+    "50002": {
+      "id": 50002,
+      "type": 0,
+      "name": "Trang Phục cdb6478d-6e9b-40b3-a074-d6cbeb0fc4e4",
+      "part": [
+        {
+          "id": 90007,
+          "dx": 0,
+          "dy": 0
+        }
+      ],
+      "isCustom": true,
+      "_modifiedAt": "2026-10-14T11:15:44.518Z"
+    },
+    "50003": {
+      "id": 50003,
+      "type": 1,
+      "name": "Trang Phục cdb6478d-6e9b-40b3-a074-d6cbeb0fc4e4",
+      "part": [
+        {
+          "id": 90008,
+          "dx": 0,
+          "dy": 0
+        }
+      ],
+      "isCustom": true,
+      "_modifiedAt": "2026-10-14T11:18:30.372Z",
+      "isDraft": true,
+      "updatedAt": "2026-10-14T11:18:30.372Z"
+    },
+    "50004": {
+      "id": 50004,
+      "type": 2,
+      "name": "Trang Phục cdb6478d-6e9b-40b3-a074-d6cbeb0fc4e4",
+      "part": [
+        {
+          "id": 90009,
+          "dx": 0,
+          "dy": 0
+        }
+      ],
+      "isCustom": true,
+      "_modifiedAt": "2026-10-14T11:18:55.333Z",
+      "isDraft": true,
+      "updatedAt": "2026-10-14T11:18:55.333Z"
+    }
+  },
   "monsters": {}
 }

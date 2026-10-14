@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import type { NsoPart, NsoPartImage } from '../types/nso'
 import type { CharacterCategory } from '../types/character'
-import { fetchAllParts, fetchAllImages, savePartDraft } from '../services/nso.api'
+import { fetchAllParts, fetchAllImages, savePartDraft, resizePartFrameImage } from '../services/nso.api'
 import { useCharacterActions } from '../composables/useCharacterActions'
 
 import CharacterLibrary from './character/CharacterLibrary.vue'
@@ -603,6 +603,41 @@ function removeCurrentFrame() {
   showToast('Đã xóa frame')
 }
 
+// Handle Frame Resize
+async function handleResizeFrame(payload: {
+  smallId: number
+  targetW: number
+  targetH: number
+  dataUrl: string
+  partId?: number
+}) {
+  // 1. Cập nhật ngay spriteDimensions để Stage và Inspector hiển thị kích thước mới tức thì
+  spriteDimensions.value[payload.smallId] = {
+    w: payload.targetW,
+    h: payload.targetH,
+  }
+
+  // 2. Gửi ảnh đã resample lên backend để lưu Small${id}.png
+  try {
+    await resizePartFrameImage({
+      smallId: payload.smallId,
+      dataUrl: payload.dataUrl,
+      targetW: payload.targetW,
+      targetH: payload.targetH,
+      partId: payload.partId,
+    })
+
+    if (editingPart.value) {
+      editingPart.value.isDraft = true
+    }
+    emit('draft-updated')
+    showToast(`✨ Đã đổi cỡ Frame #${payload.smallId} thành ${payload.targetW}×${payload.targetH}px!`)
+  } catch (err: any) {
+    console.error('Lỗi khi lưu ảnh resized:', err)
+    showToast(`❌ Lỗi lưu kích thước: ${err.message}`)
+  }
+}
+
 // Save Changes
 async function saveEditingPart() {
   if (!editingPart.value) return
@@ -959,6 +994,7 @@ onUnmounted(() => {
       @add-frame="addFrame"
       @duplicate-frame="duplicateCurrentFrame"
       @remove-frame="removeCurrentFrame"
+      @resize-frame="handleResizeFrame"
     />
 
     <!-- Toast Notification -->

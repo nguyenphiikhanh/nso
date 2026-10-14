@@ -481,6 +481,54 @@ app.post('/api/custom-parts/slice', async (request, response, next) => {
   }
 })
 
+// Cập nhật và lưu lại ảnh Small của Part sau khi resize
+app.post('/api/custom-parts/resize-frame', async (request, response, next) => {
+  try {
+    const { smallId, dataUrl, targetW, targetH, partId } = request.body
+    if (!smallId || !dataUrl) {
+      return response.status(400).json({ error: 'Cần cung cấp smallId và dataUrl ảnh mới.' })
+    }
+
+    const smallDir = join(mediaDir, 'Small')
+    const small4Dir = join(mediaDir, 'Small', '4')
+    await mkdir(smallDir, { recursive: true })
+    await mkdir(small4Dir, { recursive: true })
+
+    const base64Data = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+    const buffer = Buffer.from(base64Data, 'base64')
+
+    // Ghi đè file ảnh Small tương ứng
+    await writeFile(join(smallDir, `${smallId}.png`), buffer)
+    await writeFile(join(smallDir, `Small${smallId}.png`), buffer)
+    await writeFile(join(small4Dir, `Small${smallId}.png`), buffer)
+
+    // Nếu có partId, ghi nhận vào draft changeset
+    if (partId) {
+      const allPartsList = await getAllParts()
+      const existing = allPartsList.find((p) => p.id === Number(partId))
+      const draft = await changesetEngine.getChangeset()
+      const draftPart = draft.parts?.[String(partId)] || existing
+      if (draftPart) {
+        await changesetEngine.updateEntity('parts', Number(partId), {
+          ...draftPart,
+          isDraft: true,
+          updatedAt: new Date().toISOString(),
+        })
+      }
+    }
+
+    response.json({
+      status: 'ok',
+      smallId: Number(smallId),
+      w: Number(targetW),
+      h: Number(targetH),
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+
 // ==================== MONSTER & ANIMATION API ====================
 
 app.get('/api/monsters', async (request, response, next) => {

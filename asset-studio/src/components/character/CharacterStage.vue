@@ -116,6 +116,7 @@ function getPartZIndex(category: CharacterCategory | 'mask'): number {
         <img
           :src="`/source-media/Small/${canvasWeaponFrame.id}.png`"
           class="pixel-img"
+          :style="{ width: `${weaponPos.w}px`, height: `${weaponPos.h}px` }"
           @load="emit('image-loaded', canvasWeaponFrame.id, $event)"
         />
       </div>
@@ -135,6 +136,7 @@ function getPartZIndex(category: CharacterCategory | 'mask'): number {
         <img
           :src="`/source-media/Small/${canvasLegFrame.id}.png`"
           class="pixel-img"
+          :style="{ width: `${legPos.w}px`, height: `${legPos.h}px` }"
           @load="emit('image-loaded', canvasLegFrame.id, $event)"
         />
       </div>
@@ -154,6 +156,7 @@ function getPartZIndex(category: CharacterCategory | 'mask'): number {
         <img
           :src="`/source-media/Small/${canvasBodyFrame.id}.png`"
           class="pixel-img"
+          :style="{ width: `${bodyPos.w}px`, height: `${bodyPos.h}px` }"
           @load="emit('image-loaded', canvasBodyFrame.id, $event)"
         />
       </div>
@@ -173,6 +176,7 @@ function getPartZIndex(category: CharacterCategory | 'mask'): number {
         <img
           :src="`/source-media/Small/${canvasHeadFrame.id}.png`"
           class="pixel-img"
+          :style="{ width: `${headPos.w}px`, height: `${headPos.h}px` }"
           @load="emit('image-loaded', canvasHeadFrame.id, $event)"
         />
       </div>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { NsoPart, NsoPartImage } from '../../types/nso'
 import type {
   ActionDefinitionItem,
@@ -75,6 +75,7 @@ const emit = defineEmits<{
   (e: 'add-frame'): void
   (e: 'duplicate-frame'): void
   (e: 'remove-frame'): void
+  (e: 'resize-frame', payload: { smallId: number; targetW: number; targetH: number; dataUrl: string; partId?: number }): void
 }>()
 
 function confirmDeleteFrame() {
@@ -283,6 +284,188 @@ const clipboardSummary = computed(() => {
   }
   return `Cả 4 bộ phận (Đầu, Thân, Chân, Kiếm)`
 })
+
+// ==================== RESIZE & CLIPBOARD KÍCH THƯỚC CHI TIẾT ====================
+interface SizeClipboardData {
+  w: number
+  h: number
+  sourceSmallId?: number
+  sourceCat?: string
+}
+
+const sizeClipboard = ref<SizeClipboardData | null>(null)
+const isRatioLocked = ref(true)
+const resizeWorking = ref(false)
+
+const activeFrameDim = computed<{ w: number; h: number }>(() => {
+  const f = props.activeCategoryFrame
+  if (!f || f.id <= 0) return { w: 32, h: 32 }
+  return props.spriteDimensions[f.id] || { w: 32, h: 32 }
+})
+
+const editW = ref(32)
+const editH = ref(32)
+
+watch(
+  () => props.activeCategoryFrame?.id,
+  (newId) => {
+    if (newId && props.spriteDimensions[newId]) {
+      editW.value = props.spriteDimensions[newId].w
+      editH.value = props.spriteDimensions[newId].h
+    } else {
+      editW.value = 32
+      editH.value = 32
+    }
+  },
+  { immediate: true }
+)
+
+watch(
+  () => (props.activeCategoryFrame?.id ? props.spriteDimensions[props.activeCategoryFrame.id] : null),
+  (dim) => {
+    if (dim) {
+      editW.value = dim.w
+      editH.value = dim.h
+    }
+  }
+)
+
+function onWChanged() {
+  if (editW.value < 4) editW.value = 4
+  if (isRatioLocked.value && activeFrameDim.value.w > 0) {
+    const ratio = activeFrameDim.value.w / activeFrameDim.value.h
+    editH.value = Math.max(4, Math.round(editW.value / ratio))
+  }
+}
+
+function onHChanged() {
+  if (editH.value < 4) editH.value = 4
+  if (isRatioLocked.value && activeFrameDim.value.h > 0) {
+    const ratio = activeFrameDim.value.w / activeFrameDim.value.h
+    editW.value = Math.max(4, Math.round(editH.value * ratio))
+  }
+}
+
+async function resampleFrameImage(
+  smallId: number,
+  targetW: number,
+  targetH: number
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(targetW))
+      canvas.height = Math.max(1, Math.round(targetH))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        return reject(new Error('Không thể khởi tạo Canvas 2D'))
+      }
+      ctx.imageSmoothingEnabled = false
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/png'))
+    }
+    img.onerror = () => reject(new Error(`Không thể tải ảnh Small #${smallId}`))
+    img.src = `/source-media/Small/${smallId}.png?t=${Date.now()}`
+  })
+}
+
+async function applyResize(targetW?: number, targetH?: number) {
+  const f = props.activeCategoryFrame
+  if (!f || f.id <= 0) return
+  const w = Math.max(4, Math.min(512, Math.round(targetW ?? editW.value)))
+  const h = Math.max(4, Math.min(512, Math.round(targetH ?? editH.value)))
+
+  resizeWorking.value = true
+  try {
+    const dataUrl = await resampleFrameImage(f.id, w, h)
+    emit('resize-frame', {
+      smallId: f.id,
+      targetW: w,
+      targetH: h,
+      dataUrl,
+      partId: props.editingPart?.id,
+    })
+    showFeedback(`✨ Đã đổi kích thước Frame #${f.id} thành ${w}×${h}px!`)
+  } catch (err: any) {
+    showFeedback(`❌ Lỗi resize: ${err.message}`)
+  } finally {
+    resizeWorking.value = false
+  }
+}
+
+function quickScale(factor: number) {
+  const cur = activeFrameDim.value
+  const newW = Math.max(4, Math.round(cur.w * factor))
+  const newH = Math.max(4, Math.round(cur.h * factor))
+  editW.value = newW
+  editH.value = newH
+  applyResize(newW, newH)
+}
+
+function copyCurrentSize() {
+  const f = props.activeCategoryFrame
+  if (!f || f.id <= 0) return
+  const dim = props.spriteDimensions[f.id] || { w: editW.value, h: editH.value }
+  sizeClipboard.value = {
+    w: dim.w,
+    h: dim.h,
+    sourceSmallId: f.id,
+    sourceCat: props.activeEditCategory,
+  }
+  showFeedback(
+    `📋 Đã copy kích thước: ${dim.w}×${dim.h}px (${getCategoryLabel(props.activeEditCategory)})`
+  )
+}
+
+async function pasteSizeToCurrent() {
+  if (!sizeClipboard.value) return
+  const targetW = sizeClipboard.value.w
+  const targetH = sizeClipboard.value.h
+  editW.value = targetW
+  editH.value = targetH
+  await applyResize(targetW, targetH)
+}
+
+async function pasteSizeToAllFrames() {
+  if (!sizeClipboard.value && (editW.value <= 0 || editH.value <= 0)) return
+  const targetW = sizeClipboard.value?.w ?? editW.value
+  const targetH = sizeClipboard.value?.h ?? editH.value
+  const part = props.editingPart
+  if (!part || !Array.isArray(part.part) || part.part.length === 0) return
+
+  if (
+    !window.confirm(
+      `Bạn có chắc muốn đổi kích thước toàn bộ ${part.part.length} frames của Part #${part.id} thành ${targetW}×${targetH}px không?`
+    )
+  ) {
+    return
+  }
+
+  resizeWorking.value = true
+  try {
+    for (const frame of part.part) {
+      if (frame.id > 0) {
+        const dataUrl = await resampleFrameImage(frame.id, targetW, targetH)
+        emit('resize-frame', {
+          smallId: frame.id,
+          targetW,
+          targetH,
+          dataUrl,
+          partId: part.id,
+        })
+      }
+    }
+    showFeedback(
+      `⚡ Đã đồng bộ kích thước ${targetW}×${targetH}px cho toàn bộ ${part.part.length} frames!`
+    )
+  } catch (err: any) {
+    showFeedback(`❌ Lỗi đồng bộ: ${err.message}`)
+  } finally {
+    resizeWorking.value = false
+  }
+}
 </script>
 
 <template>
@@ -946,6 +1129,107 @@ const clipboardSummary = computed(() => {
           <div class="field-item">
             <label>Độ lệch dy:</label>
             <input v-model.number="activeCategoryFrame.dy" type="number" class="insp-input" />
+          </div>
+        </div>
+
+        <!-- Cụm công cụ Resize & Copy/Paste kích thước -->
+        <div class="frame-resizer-box">
+          <div class="fr-header">
+            <span class="fr-title">📐 Kích Thước Pixel Art (W×H)</span>
+            <div class="fr-header-actions">
+              <button
+                type="button"
+                class="btn-mini-tool"
+                :class="{ active: isRatioLocked }"
+                @click="isRatioLocked = !isRatioLocked"
+                :title="isRatioLocked ? 'Đang khóa tỉ lệ W/H (Click để mở khóa)' : 'Tự do W/H (Click để khóa tỉ lệ)'"
+              >
+                {{ isRatioLocked ? '🔒 Khóa tỉ lệ' : '🔓 Tự do' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="fr-inputs-row">
+            <div class="fr-field">
+              <label>Rộng (W):</label>
+              <div class="input-with-unit">
+                <input
+                  v-model.number="editW"
+                  type="number"
+                  min="4"
+                  max="512"
+                  step="1"
+                  class="insp-input"
+                  @change="onWChanged"
+                />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+
+            <div class="fr-field">
+              <label>Cao (H):</label>
+              <div class="input-with-unit">
+                <input
+                  v-model.number="editH"
+                  type="number"
+                  min="4"
+                  max="512"
+                  step="1"
+                  class="insp-input"
+                  @change="onHChanged"
+                />
+                <span class="unit-tag">px</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              class="btn-apply-resize"
+              :disabled="resizeWorking || (editW === activeFrameDim.w && editH === activeFrameDim.h)"
+              @click="applyResize()"
+              title="Áp dụng kích thước mới cho frame này (Nearest-Neighbor)"
+            >
+              {{ resizeWorking ? '⏳ Đang lưu...' : '✓ Áp Dụng' }}
+            </button>
+          </div>
+
+          <!-- Quick Scale Presets -->
+          <div class="fr-presets-row">
+            <span class="presets-label">Tỉ lệ nhanh:</span>
+            <button type="button" class="btn-scale-preset" @click="quickScale(0.5)">50%</button>
+            <button type="button" class="btn-scale-preset" @click="quickScale(0.75)">75%</button>
+            <button type="button" class="btn-scale-preset" @click="quickScale(1.25)">125%</button>
+            <button type="button" class="btn-scale-preset" @click="quickScale(1.5)">150%</button>
+            <button type="button" class="btn-scale-preset" @click="quickScale(2.0)">200%</button>
+          </div>
+
+          <!-- Copy / Paste Size Toolbar -->
+          <div class="fr-clipboard-row">
+            <button
+              type="button"
+              class="btn-clip-act"
+              @click="copyCurrentSize"
+              title="Lưu kích thước W×H của frame này vào clipboard để dán cho frame khác hoặc bộ phận khác"
+            >
+              📋 Copy Cỡ
+            </button>
+            <button
+              type="button"
+              class="btn-clip-act"
+              :disabled="!sizeClipboard"
+              @click="pasteSizeToCurrent"
+              :title="sizeClipboard ? `Dán kích thước ${sizeClipboard.w}×${sizeClipboard.h}px vào frame này` : 'Chưa có kích thước nào trong clipboard'"
+            >
+              📌 Dán Cỡ {{ sizeClipboard ? `(${sizeClipboard.w}×${sizeClipboard.h})` : '' }}
+            </button>
+            <button
+              type="button"
+              class="btn-clip-act btn-clip-all"
+              @click="pasteSizeToAllFrames"
+              title="Đồng bộ kích thước hiện tại cho toàn bộ các frame của Part này"
+            >
+              ⚡ Dán Mọi Frame
+            </button>
           </div>
         </div>
       </div>
@@ -1711,6 +1995,186 @@ const clipboardSummary = computed(() => {
   color: #E9EFEB;
   font-size: 10px;
   font-family: monospace;
+}
+
+/* Resizer Box */
+.frame-resizer-box {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background-color: #141A1C;
+  border: 1px solid #344143;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fr-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.fr-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: #B9F36B;
+}
+
+.btn-mini-tool {
+  padding: 2px 6px;
+  font-size: 9px;
+  background-color: #20282A;
+  border: 1px solid #344143;
+  color: #98A6A1;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-mini-tool:hover {
+  color: #E9EFEB;
+  border-color: #556260;
+}
+
+.btn-mini-tool.active {
+  background-color: #293A21;
+  color: #B9F36B;
+  border-color: #B9F36B;
+}
+
+.fr-inputs-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 6px;
+  align-items: flex-end;
+}
+
+.fr-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fr-field label {
+  font-size: 9px;
+  color: #98A6A1;
+}
+
+.input-with-unit {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-with-unit .insp-input {
+  padding-right: 20px;
+}
+
+.unit-tag {
+  position: absolute;
+  right: 5px;
+  font-size: 9px;
+  color: #657572;
+  pointer-events: none;
+  font-family: monospace;
+}
+
+.btn-apply-resize {
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background-color: #293A21;
+  border: 1px solid #B9F36B;
+  color: #B9F36B;
+  border-radius: 3px;
+  cursor: pointer;
+  height: 24px;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.btn-apply-resize:hover:not(:disabled) {
+  background-color: #B9F36B;
+  color: #18210F;
+}
+
+.btn-apply-resize:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: #344143;
+  color: #98A6A1;
+}
+
+.fr-presets-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.presets-label {
+  font-size: 9px;
+  color: #98A6A1;
+}
+
+.btn-scale-preset {
+  padding: 2px 5px;
+  font-size: 9px;
+  background-color: #20282A;
+  border: 1px solid #344143;
+  color: #E9EFEB;
+  border-radius: 3px;
+  cursor: pointer;
+  transition: all 0.12s ease;
+}
+
+.btn-scale-preset:hover {
+  background-color: #293335;
+  border-color: #B9F36B;
+  color: #B9F36B;
+}
+
+.fr-clipboard-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.btn-clip-act {
+  flex: 1;
+  padding: 3px 6px;
+  font-size: 9.5px;
+  font-weight: 500;
+  background-color: #20282A;
+  border: 1px solid #344143;
+  color: #E9EFEB;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.btn-clip-act:hover:not(:disabled) {
+  background-color: #293335;
+  border-color: #F1A773;
+  color: #F1A773;
+}
+
+.btn-clip-act:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-clip-act.btn-clip-all {
+  color: #B9F36B;
+  border-color: rgba(185, 243, 107, 0.4);
+}
+
+.btn-clip-act.btn-clip-all:hover:not(:disabled) {
+  background-color: #293A21;
+  border-color: #B9F36B;
 }
 
 .frames-manager-card {
